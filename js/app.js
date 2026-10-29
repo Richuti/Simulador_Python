@@ -20,6 +20,7 @@
 
   let ws, escenario, generador, mapaLineas = new Map(), codigoActual = '';
   let interp = null, modoPaso = false, avanzar = null, entradaPendiente = null;
+  let terminada = Promise.resolve(), temaActual = null;
   let velocidad = 3;
 
   const almacen = {
@@ -225,6 +226,8 @@
     escenario.limpiar();
     const it = new Interprete(ws, ui);
     interp = it;
+    let fin;
+    terminada = new Promise(r => { fin = r; });
     actualizarBotones();
     try {
       await it.correr();
@@ -241,6 +244,7 @@
       modoPaso = false;
       avanzar = null;
       actualizarBotones();
+      fin();
     }
   }
 
@@ -254,10 +258,13 @@
     }
     let tipo = 'Error interno', msg = String((e && e.message) || e);
     if (e instanceof PyError) { tipo = e.tipo; msg = e.message; } else console.error(e);
+    const pista = /does not support item (assignment|deletion)/.test(msg)
+      ? 'Las tuplas y los textos no se pueden modificar. Si necesitas cambiar elementos, usa una lista.'
+      : PISTAS[tipo];
     const b = it.actual;
     const n = b ? mapaLineas.get(b.id) : null;
     consola.agregar(`${n ? `Línea ${n} · ` : ''}${tipo}: ${msg}`, 'error');
-    if (PISTAS[tipo]) consola.agregar(PISTAS[tipo], 'pista');
+    if (pista) consola.agregar(pista, 'pista');
     estado('El programa se detuvo por un error. El bloque que falló está resaltado.');
     if (b) {
       ws.highlightBlock(b.id);
@@ -277,9 +284,19 @@
     if (motivo) consola.agregar(motivo, 'sistema');
   }
 
+  async function detenerYEsperar() {
+    if (!interp) return;
+    detener();
+    await terminada;
+  }
+
   // ---------- proyecto ----------
+  const claveProyecto = () => 'simulador:proyecto:' + (temaActual ? temaActual.id : 'libre');
+  const VACIO = { blocks: { languageVersion: 0, blocks: [] } };
+
   function guardarLocal() {
-    try { almacen.escribir('simulador:proyecto', JSON.stringify(Blockly.serialization.workspaces.save(ws))); } catch { /* nada */ }
+    if (!temaActual) return;
+    try { almacen.escribir(claveProyecto(), JSON.stringify(Blockly.serialization.workspaces.save(ws))); } catch { /* nada */ }
   }
 
   function cargar(json) {
@@ -294,20 +311,88 @@
     guardarLocal();
   }
 
-  async function cargarEjemplo(id) {
-    const ej = EJEMPLOS.find(e => e.id === id);
-    if (!ej) return;
-    if (interp) detener();
-    if (ws.getAllBlocks(false).length) {
-      const ok = await dialogo({ mensaje: `Se reemplazarán los bloques actuales por el ejemplo «${ej.nombre}». ¿Continuar?`, aceptar: 'Cargar ejemplo' });
-      if (ok === null) return;
-    }
-    cargar(ej.crear());
-    ws.cleanUp();
+  function marcarEjemplo(i) {
+    for (const [k, chip] of [...$('#ejemplos-lista').children].entries()) chip.setAttribute('aria-pressed', String(k === i));
+  }
+
+  // ---------- temas ----------
+  function pintarInicio() {
+    $('#temas-grid').innerHTML = TEMAS.map(t => `
+      <button class="tema-tarjeta${t.id === 'libre' ? ' libre' : ''}" data-tema="${t.id}" style="--c: ${t.color}">
+        <code class="tema-codigo">${escaparHTML(t.codigo)}</code>
+        <span class="tema-titulo">${escaparHTML(t.nombre)}</span>
+        <span class="tema-frase">${escaparHTML(t.frase)}</span>
+        <span class="tema-pie">${t.ejemplos.length ? `${t.ejemplos.length} ejemplos` : 'todos los bloques'} →</span>
+      </button>`).join('');
+    for (const b of $('#temas-grid').children) b.addEventListener('click', () => { location.hash = b.dataset.tema; });
+  }
+
+  async function mostrarInicio() {
+    await detenerYEsperar();
+    temaActual = null;
+    document.body.classList.add('en-inicio');
+    $('#inicio').scrollTop = 0;
+  }
+
+  async function abrirTema(id) {
+    const tema = TEMAS.find(t => t.id === id);
+    if (!tema) return mostrarInicio();
+    await detenerYEsperar();
+    temaActual = tema;
+    document.body.classList.remove('en-inicio');
+    document.body.style.setProperty('--tema', tema.color);
+    $('#tema-nombre').textContent = tema.nombre;
+    $('#tema-frase').textContent = tema.frase;
+    $('#ejemplos-caja').hidden = !tema.ejemplos.length;
+    $('#ejemplos-lista').innerHTML = '';
+    tema.ejemplos.forEach((ej, i) => {
+      const chip = document.createElement('button');
+      chip.className = 'chip';
+      chip.textContent = ej.nombre;
+      chip.setAttribute('aria-pressed', 'false');
+      chip.addEventListener('click', () => cargarEjemplo(i));
+      $('#ejemplos-lista').appendChild(chip);
+    });
+    Blockly.svgResize(ws);
+    ws.updateToolbox(crearToolbox(tema.categorias));
     escenario.limpiar();
     consola.limpiar();
-    consola.agregar(`Ejemplo cargado: ${ej.nombre}. Pulsa Ejecutar o Paso a paso.`, 'sistema');
+
+    let guardado = null;
+    try { guardado = JSON.parse(almacen.leer(claveProyecto()) || 'null'); } catch { guardado = null; }
+    if (guardado && guardado.blocks && guardado.blocks.blocks && guardado.blocks.blocks.length) {
+      cargar(guardado);
+      consola.agregar('Se recuperó tu programa de este tema. Toca un ejemplo para ver otro.', 'sistema');
+    } else if (tema.ejemplos.length) {
+      cargar(tema.ejemplos[0].crear());
+      ws.cleanUp();
+      marcarEjemplo(0);
+      ajustarZoom();
+      ejecutar(false);
+      return;
+    } else {
+      cargar(VACIO);
+      consola.agregar('Arrastra bloques desde las categorías de la izquierda y pulsa Ejecutar.', 'sistema');
+    }
     ajustarZoom();
+    estado('Pulsa Ejecutar o Paso a paso.');
+  }
+
+  // Un toque: carga los bloques, muestra el código y ejecuta la simulación.
+  async function cargarEjemplo(i) {
+    const ej = temaActual.ejemplos[i];
+    await detenerYEsperar();
+    cargar(ej.crear());
+    ws.cleanUp();
+    ajustarZoom();
+    marcarEjemplo(i);
+    ejecutar(false);
+  }
+
+  function seguirHash() {
+    const id = decodeURIComponent(location.hash.slice(1));
+    if (!id || id === 'inicio') { if (!document.body.classList.contains('en-inicio')) mostrarInicio(); return; }
+    if (!temaActual || temaActual.id !== id) abrirTema(id);
   }
 
   function descargar(nombre, texto, tipo) {
@@ -379,7 +464,7 @@
     const temas = crearTemas();
 
     ws = Blockly.inject('blockly', {
-      toolbox: crearToolbox(),
+      toolbox: crearToolbox(TEMAS[0].categorias),
       renderer: 'zelos',
       theme: oscuro() ? temas.oscuro : temas.claro,
       grid: { spacing: 28, length: 2, colour: '#8794a833', snap: true },
@@ -409,20 +494,6 @@
 
     new ResizeObserver(() => Blockly.svgResize(ws)).observe($('#blockly'));
 
-    // Ejemplos
-    const sel = $('#ejemplos');
-    for (const ej of EJEMPLOS) {
-      const o = document.createElement('option');
-      o.value = ej.id;
-      o.textContent = ej.nombre;
-      sel.appendChild(o);
-    }
-    sel.addEventListener('change', async () => {
-      const id = sel.value;
-      sel.value = '';
-      await cargarEjemplo(id);
-    });
-
     // Controles
     $('#btn-ejecutar').addEventListener('click', () => ejecutar(false));
     $('#btn-paso').addEventListener('click', () => ejecutar(true));
@@ -441,10 +512,18 @@
     $('#btn-centrar').addEventListener('click', () => { ws.cleanUp(); ajustarZoom(); });
     $('#btn-ordenar').addEventListener('click', () => escenario.ordenar());
 
+    const menu = $('#menu-mas');
+    menu.addEventListener('click', e => { if (e.target.closest('.menu button')) menu.open = false; });
+    document.addEventListener('click', e => { if (!menu.contains(e.target)) menu.open = false; });
+
+    $('#btn-inicio').addEventListener('click', () => { location.hash = 'inicio'; });
+    $('#btn-temas').addEventListener('click', () => { location.hash = 'inicio'; });
+
     $('#btn-nuevo').addEventListener('click', async () => {
       if (ws.getAllBlocks(false).length && (await dialogo({ mensaje: 'Se borrarán todos los bloques. ¿Empezar un programa nuevo?', aceptar: 'Borrar todo' })) === null) return;
-      detener();
-      cargar({ blocks: { languageVersion: 0, blocks: [] } });
+      await detenerYEsperar();
+      cargar(VACIO);
+      marcarEjemplo(-1);
       escenario.limpiar();
       consola.limpiar();
     });
@@ -480,20 +559,13 @@
       if (e.key === 'F8' || (e.key === 'Enter' && e.ctrlKey)) { e.preventDefault(); ejecutar(e.key === 'F8'); }
     });
 
-    // Proyecto inicial: lo último guardado o el primer ejemplo.
-    let inicial = null;
-    try { inicial = JSON.parse(almacen.leer('simulador:proyecto') || 'null'); } catch { inicial = null; }
-    const tieneBloques = inicial && inicial.blocks && inicial.blocks.blocks && inicial.blocks.blocks.length;
-    try {
-      cargar(tieneBloques ? inicial : EJEMPLOS[0].crear());
-    } catch {
-      cargar(EJEMPLOS[0].crear());
-    }
+    pintarInicio();
     ajustarVelocidad();
     actualizarBotones();
-    ajustarZoom();
-    consola.agregar(tieneBloques ? 'Se recuperó tu último programa.' : `Ejemplo cargado: ${EJEMPLOS[0].nombre}. Pulsa Ejecutar o Paso a paso.`, 'sistema');
-    estado('Arma tu programa con bloques y pulsa Ejecutar.');
+    window.addEventListener('hashchange', seguirHash);
+    const inicial = decodeURIComponent(location.hash.slice(1));
+    if (TEMAS.some(t => t.id === inicial)) await abrirTema(inicial);
+    else await mostrarInicio();
     document.body.classList.add('listo');
   }
 

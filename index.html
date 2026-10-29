@@ -13,13 +13,13 @@
 </head>
 <body>
 <header class="barra">
-  <div class="marca">
+  <button id="btn-inicio" class="marca" title="Volver a la lista de temas">
     <span class="logo" aria-hidden="true">[ ]</span>
-    <div>
-      <h1>Simulador de Estructuras</h1>
-      <p>Bloques que se convierten en Python</p>
-    </div>
-  </div>
+    <span class="marca-texto">
+      <span class="marca-titulo">Simulador de Estructuras</span>
+      <span class="marca-sub">Bloques que se convierten en Python</span>
+    </span>
+  </button>
 
   <div class="controles" role="toolbar" aria-label="Ejecución">
     <button id="btn-ejecutar" class="primario" title="Ejecutar (Ctrl+Enter)">
@@ -37,17 +37,36 @@
     </label>
   </div>
 
-  <div class="proyecto">
-    <label class="sr" for="ejemplos">Cargar un ejemplo</label>
-    <select id="ejemplos">
-      <option value="">Ejemplos…</option>
-    </select>
-    <button id="btn-nuevo" class="discreto">Nuevo</button>
-    <button id="btn-abrir" class="discreto">Abrir</button>
-    <button id="btn-guardar" class="discreto">Guardar</button>
-    <input type="file" id="archivo" accept=".json,application/json" hidden>
-  </div>
+  <details class="mas" id="menu-mas">
+    <summary>Más</summary>
+    <div class="menu">
+      <button id="btn-nuevo" class="discreto">Empezar de cero</button>
+      <button id="btn-abrir" class="discreto">Abrir proyecto…</button>
+      <button id="btn-guardar" class="discreto">Guardar proyecto</button>
+    </div>
+  </details>
+  <input type="file" id="archivo" accept=".json,application/json" hidden>
 </header>
+
+<section id="inicio" class="inicio" aria-labelledby="inicio-titulo">
+  <div class="inicio-contenido">
+    <h1 id="inicio-titulo">¿Qué quieres aprender hoy?</h1>
+    <p class="inicio-sub">Elige un tema. Cada uno trae ejemplos listos: tócalos y verás los bloques, la simulación y el código en Python.</p>
+    <div id="temas-grid" class="temas-grid"></div>
+  </div>
+</section>
+
+<div class="tema-barra" id="tema-barra">
+  <button id="btn-temas" class="discreto chico">← Temas</button>
+  <div class="tema-info">
+    <h2 id="tema-nombre"></h2>
+    <p id="tema-frase"></p>
+  </div>
+  <div class="ejemplos" id="ejemplos-caja">
+    <span class="ejemplos-titulo">Toca un ejemplo:</span>
+    <div id="ejemplos-lista" class="ejemplos-lista"></div>
+  </div>
+</div>
 
 <main class="area">
   <section class="editor" aria-label="Área de bloques">
@@ -118,7 +137,7 @@
 <script src="js/interprete.js"></script>
 <script src="js/python.js"></script>
 <script src="js/escenario.js"></script>
-<script src="js/ejemplos.js"></script>
+<script src="js/temas.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
